@@ -1,4 +1,4 @@
-// 李康为 1900013086
+// 滑动窗口协议实验 李康为 1900013086
 
 #include "sysinclude.h"
 #include <queue>
@@ -24,7 +24,7 @@ typedef struct frame
 	unsigned int size;			// 数据的大小 
 };
 
-queue<frame> msgCache;
+queue<frame> sendq;
 deque<frame> slides;
 
 /*
@@ -37,23 +37,24 @@ int stud_slide_window_stop_and_wait(char *pBuffer, int bufferSize, UINT8 message
 	if (messageType == MSG_TYPE_SEND) {
 		memcpy(&buffer, pBuffer, sizeof(buffer));
 		buffer.size = bufferSize;
-		msgCache.push(buffer);
+		sendq.push(buffer);
+
 		if (flag) {
 			flag = false;
-			buffer = msgCache.front();
-			SendFRAMEPacket((unsigned char*)(&buffer), buffer.size);
+			buffer = sendq.front();
+			SendFRAMEPacket((unsigned char*)(&buffer), bufferSize);
 		}
 	} else if (messageType == MSG_TYPE_RECEIVE) {
 		flag = true;
-		msgCache.pop();
-		if (!msgCache.empty()) {
+		sendq.pop();
+		if (!sendq.empty()) {
 			flag = false;
-			buffer = msgCache.front();
+			buffer = sendq.front();
 			SendFRAMEPacket((unsigned char*)(&buffer), buffer.size);
 		}
 	} else if (messageType == MSG_TYPE_TIMEOUT) {
 		flag = false;
-		buffer = msgCache.front();
+		buffer = sendq.front();
 		SendFRAMEPacket((unsigned char*)(&buffer), buffer.size);
 	} else {
 		return -1;
@@ -70,13 +71,13 @@ int stud_slide_window_back_n_frame(char *pBuffer, int bufferSize, UINT8 messageT
 	if (messageType == MSG_TYPE_SEND) {
 		memcpy(&buffer, pBuffer, sizeof(buffer));
 		buffer.size = bufferSize;
-		msgCache.push(buffer);
+		sendq.push(buffer);
 
 		if (slides.size() < WINDOW_SIZE_BACK_N_FRAME) {
-			buffer = msgCache.front();
+			buffer = sendq.front();
 			slides.push_back(buffer);
-			SendFRAMEPacket((unsigned char*)(&buffer), buffer.size);
-			msgCache.pop();
+			SendFRAMEPacket((unsigned char*)(&buffer), bufferSize);
+			sendq.pop();
 		}
 	} else if (messageType == MSG_TYPE_RECEIVE) {
 		memcpy(&buffer, pBuffer, sizeof(buffer));
@@ -85,11 +86,11 @@ int stud_slide_window_back_n_frame(char *pBuffer, int bufferSize, UINT8 messageT
 		}
 		slides.pop_front();
 
-		while (slides.size() < WINDOW_SIZE_BACK_N_FRAME && !msgCache.empty()) {
-			buffer = msgCache.front();
+		while (slides.size() < WINDOW_SIZE_BACK_N_FRAME && !sendq.empty()) {
+			buffer = sendq.front();
 			slides.push_back(buffer);
-			msgCache.pop();
 			SendFRAMEPacket((unsigned char*)(&buffer), buffer.size);
+			sendq.pop();
 		}
 	} else if (messageType == MSG_TYPE_TIMEOUT) {
 		for (deque<frame>::iterator iter = slides.begin(); iter != slides.end(); ++iter) {
@@ -110,24 +111,23 @@ int stud_slide_window_choice_frame_resend(char *pBuffer, int bufferSize, UINT8 m
 	if (messageType == MSG_TYPE_SEND) {
 		memcpy(&buffer, pBuffer, sizeof(buffer));
 		buffer.size = bufferSize;
-		msgCache.push(buffer);
+		sendq.push(buffer);
 
 		if (slides.size() < WINDOW_SIZE_BACK_N_FRAME) {
-			buffer = msgCache.front();
+			buffer = sendq.front();
 			slides.push_back(buffer);
-			msgCache.pop();
-			SendFRAMEPacket((unsigned char*)(&buffer), buffer.size);
+			SendFRAMEPacket((unsigned char*)(&buffer), bufferSize);
+			sendq.pop();
 		}
 	} else if (messageType == MSG_TYPE_RECEIVE) {
 		memcpy(&buffer, pBuffer, sizeof(buffer));
 
 		if (ntohl(buffer.head.kind) == ack) {
-			while (ntohl(slides.begin()->head.seq) != ntohl(buffer.head.ack) && !slides.empty()) {
+			while (ntohl(slides.begin()->head.seq) != ntohl(buffer.head.ack)) {
 				slides.pop_front();
 			}
 			slides.pop_front();
-		}
-		else if (ntohl(buffer.head.kind) == nak) {
+		} else {
 			for (deque<frame>::iterator iter = slides.begin(); iter != slides.end(); ++iter) {
 				if (ntohl(buffer.head.ack) == ntohl(iter->head.seq)) {
 					SendFRAMEPacket((unsigned char*)&(*iter), iter->size);
@@ -135,18 +135,15 @@ int stud_slide_window_choice_frame_resend(char *pBuffer, int bufferSize, UINT8 m
 				}
 			}
 		}
-		while (slides.size() < WINDOW_SIZE_BACK_N_FRAME && !msgCache.empty())	{
-			buffer = msgCache.front();
+		while (slides.size() < WINDOW_SIZE_BACK_N_FRAME && !sendq.empty())	{
+			buffer = sendq.front();
 			slides.push_back(buffer);
-			msgCache.pop();
 			SendFRAMEPacket((unsigned char*)(&buffer), buffer.size);
+			sendq.pop();
 		}
 	} else if (messageType == MSG_TYPE_TIMEOUT) {
-		unsigned int seq;
-		memcpy(&seq, pBuffer, sizeof(seq));
-
 		for (deque<frame>::iterator iter = slides.begin(); iter != slides.end(); ++iter) {
-			if (ntohl(seq) == ntohl(iter->head.seq)) {
+			if (ntohl(*pBuffer) == ntohl(iter->head.seq)) {
 				SendFRAMEPacket((unsigned char*)(&(*iter)), iter->size);
 				break;
 			}
